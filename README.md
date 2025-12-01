@@ -43,10 +43,11 @@ print("delay ms:", metrics.delay_ms)
 ```
 
 ## Process WAV files end-to-end
-`examples/demo2.py` loads stereo render + mic signals, runs the AEC, and writes a cleaned WAV:
+`examples/demo2.py` loads stereo render + mic signals, runs the AEC, and writes a cleaned WAV. Generate sample inputs and run the demo with:
 ```bash
 pip install soundfile numpy
-python examples/demo2.py render.wav mic_with_echo.wav output.wav
+python examples/generate_wavs.py       # writes examples/render.wav and examples/mic_with_echo.wav
+python examples/demo2.py examples/render.wav examples/mic_with_echo.wav output.wav
 ```
 
 ## API highlights
