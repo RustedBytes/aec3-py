@@ -17,10 +17,10 @@ render = np.zeros(frame_samples * 2, dtype=np.float32)  # stereo
 
 # Option 1: split calls
 aec.handle_render_frame(render)
-out, metrics = aec.process_capture_frame(capture, level_change=False)
+out, metrics = aec.process_capture_frame(capture)
 
 # Option 2: combined convenience call
-out2, metrics2 = aec.process(capture, render, level_change=False)
+out2, metrics2 = aec.process(capture, render)
 
 print("out.shape:", out.shape)
 print("ERL:", metrics.echo_return_loss)
