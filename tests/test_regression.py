@@ -24,6 +24,10 @@ def test_stream_and_echo(rate, render_ch, capture_ch):
     # Echo-only test; separate near-end test prevents silence from passing.
     assert attenuation_db(capture, output, rate) > 10
     assert isinstance(metrics, Metrics)
+    assert metrics.echo_return_loss_enhancement > 3
+    assert 0 <= metrics.delay_ms <= 100
+    assert metrics.render_jitter_min == metrics.render_jitter_max == 1
+    assert metrics.capture_jitter_min == metrics.capture_jitter_max == 1
     for field in FIELDS:
         assert np.isfinite(getattr(metrics, field))
         assert getattr(aec.metrics(), field) == getattr(metrics, field)
