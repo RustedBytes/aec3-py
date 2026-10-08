@@ -19,7 +19,9 @@ def load_audio(path: Path):
     return data, sr
 
 
-def main(render_path: str, capture_path: str, out_path: str):
+def main(
+    render_path: str | Path, capture_path: str | Path, out_path: str | Path
+) -> None:
     render_path = Path(render_path)
     capture_path = Path(capture_path)
     out_path = Path(out_path)

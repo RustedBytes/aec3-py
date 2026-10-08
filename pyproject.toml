@@ -2,6 +2,12 @@
 requires = ["maturin>=1.0,<2.0", "numpy>=1.21"]
 build-backend = "maturin"
 
+[tool.maturin]
+include = [
+  { path = "aec3_py.pyi", format = "sdist" },
+  { path = "vendor/**/*", format = "sdist" },
+]
+
 [project]
 name = "aec3-py"
 version = "0.2.0"
@@ -17,3 +23,33 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
+
+[dependency-groups]
+quality = [
+  "ruff==0.16.10",
+  "pyright==1.1.414",
+  "pytest>=9,<10",
+  "soundfile>=0.13,<1",
+]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["vendor"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Standalone scripts add the shared test fixtures to their import path.
+"benchmarks/*.py" = ["E402"]
+
+[tool.pyright]
+include = ["aec3_py.pyi", "tests", "benchmarks", "examples"]
+exclude = ["vendor"]
+extraPaths = ["tests"]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+# The native module has a .pyi contract, but no Python implementation source.
+reportMissingModuleSource = false
+venvPath = "."
+venv = ".venv"
