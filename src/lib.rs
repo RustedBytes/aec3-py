@@ -1,5 +1,5 @@
 use aec3::api::control::Metrics as RustMetrics;
-use aec3::graph::GraphError;
+use aec3::graph::{GraphError, PacketMeta};
 use aec3::nodes::audio::AudioFormat;
 use aec3::pipelines::linear;
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
@@ -62,6 +62,7 @@ pub struct PyAec3 {
     render_channels: usize,
     capture_channels: usize,
     last_metrics: RustMetrics,
+    capture_sequence: u64,
 }
 
 fn map_graph_err(err: GraphError) -> PyErr {
@@ -75,10 +76,17 @@ fn bad_len(kind: &str, got: usize, expected: usize) -> PyErr {
     ))
 }
 
+fn validate_samples(kind: &str, samples: &[f32]) -> PyResult<()> {
+    if samples.iter().any(|sample| !sample.is_finite()) {
+        return Err(PyValueError::new_err(format!(
+            "{kind} must contain only finite samples"
+        )));
+    }
+    Ok(())
+}
+
 fn not_contiguous(kind: &str, e: impl std::fmt::Display) -> PyErr {
-    PyErr::new::<PyValueError, _>(format!(
-        "{kind} array must be contiguous in memory: {e}"
-    ))
+    PyErr::new::<PyValueError, _>(format!("{kind} array must be contiguous in memory: {e}"))
 }
 
 #[pymethods]
@@ -100,14 +108,22 @@ impl PyAec3 {
             capture_channels,
             initial_delay_ms = None,
             enable_high_pass = None,
+            *,
+            enable_noise_suppression = false,
+            enable_gain_controller2 = false,
+            enable_post_filter = false,
         )
     )]
+    #[allow(clippy::too_many_arguments)] // Preserve positional API and add keyword-only stages.
     fn new(
         sample_rate_hz: i32,
         render_channels: usize,
         capture_channels: usize,
         initial_delay_ms: Option<i32>,
         enable_high_pass: Option<bool>,
+        enable_noise_suppression: bool,
+        enable_gain_controller2: bool,
+        enable_post_filter: bool,
     ) -> PyResult<Self> {
         if !matches!(sample_rate_hz, 16_000 | 32_000 | 48_000) {
             return Err(PyErr::new::<PyValueError, _>(format!(
@@ -127,7 +143,11 @@ impl PyAec3 {
         let render_format = AudioFormat::ten_ms(sample_rate_hz as u32, render_channels as u16);
         let capture_format = AudioFormat::ten_ms(sample_rate_hz as u32, capture_channels as u16);
 
-        let mut builder = linear::builder(render_format, capture_format).export_metrics(true);
+        let mut builder = linear::builder(render_format, capture_format)
+            .export_metrics(true)
+            .enable_noise_suppression(enable_noise_suppression)
+            .enable_gain_controller2(enable_gain_controller2)
+            .enable_post_filter(enable_post_filter);
 
         if let Some(delay) = initial_delay_ms {
             builder = builder.initial_delay_ms(delay);
@@ -145,6 +165,7 @@ impl PyAec3 {
             render_channels,
             capture_channels,
             last_metrics: RustMetrics::default(),
+            capture_sequence: 0,
         })
     }
 
@@ -189,7 +210,10 @@ impl PyAec3 {
             return Err(bad_len("render_frame", slice.len(), expected));
         }
 
-        self.inner.handle_render_frame(slice).map_err(map_graph_err)?;
+        validate_samples("render_frame", slice)?;
+        self.inner
+            .handle_render_frame(slice)
+            .map_err(map_graph_err)?;
         self.pull_metrics()
     }
 
@@ -200,7 +224,7 @@ impl PyAec3 {
     /// capture_frame : numpy.ndarray
     ///     1D float32 array, length = frame_samples * capture_channels
     /// level_change : bool, optional
-    ///     Accepted for backwards compatibility; ignored by the new pipeline.
+    ///     Signals a capture gain change to AEC3 via packet metadata.
     ///
     /// Returns
     /// -------
@@ -212,7 +236,7 @@ impl PyAec3 {
         &mut self,
         py: Python<'py>,
         capture_frame: PyReadonlyArray1<'py, f32>,
-        #[allow(unused_variables)] level_change: bool,
+        level_change: bool,
     ) -> PyResult<(Bound<'py, PyArray1<f32>>, PyMetrics)> {
         let capture_slice = capture_frame
             .as_slice()
@@ -223,10 +247,9 @@ impl PyAec3 {
             return Err(bad_len("capture_frame", capture_slice.len(), expected));
         }
 
+        validate_samples("capture_frame", capture_slice)?;
         let mut out = vec![0.0f32; capture_slice.len()];
-        self.inner
-            .process_capture_frame(capture_slice, &mut out)
-            .map_err(map_graph_err)?;
+        self.process_capture(capture_slice, level_change, &mut out)?;
         self.pull_metrics()?;
 
         let out_array = out.into_pyarray(py);
@@ -243,7 +266,7 @@ impl PyAec3 {
     /// render_frame : Optional[numpy.ndarray]
     ///     1D float32 array, length = frame_samples * render_channels
     /// level_change : bool, optional
-    ///     Accepted for backwards compatibility; ignored by the new pipeline.
+    ///     Signals a capture gain change to AEC3 via packet metadata.
     ///
     /// Returns
     /// -------
@@ -256,7 +279,7 @@ impl PyAec3 {
         py: Python<'py>,
         capture_frame: PyReadonlyArray1<'py, f32>,
         render_frame: Option<PyReadonlyArray1<'py, f32>>,
-        #[allow(unused_variables)] level_change: bool,
+        level_change: bool,
     ) -> PyResult<(Bound<'py, PyArray1<f32>>, PyMetrics)> {
         let capture_slice = capture_frame
             .as_slice()
@@ -264,7 +287,11 @@ impl PyAec3 {
 
         let expected_capture = self.frame_samples * self.capture_channels;
         if capture_slice.len() != expected_capture {
-            return Err(bad_len("capture_frame", capture_slice.len(), expected_capture));
+            return Err(bad_len(
+                "capture_frame",
+                capture_slice.len(),
+                expected_capture,
+            ));
         }
 
         let render_slice_opt: Option<&[f32]> = if let Some(ref arr) = render_frame {
@@ -282,16 +309,16 @@ impl PyAec3 {
             None
         };
 
+        validate_samples("capture_frame", capture_slice)?;
         if let Some(render_slice) = render_slice_opt {
+            validate_samples("render_frame", render_slice)?;
             self.inner
                 .handle_render_frame(render_slice)
                 .map_err(map_graph_err)?;
         }
 
         let mut out = vec![0.0f32; capture_slice.len()];
-        self.inner
-            .process_capture_frame(capture_slice, &mut out)
-            .map_err(map_graph_err)?;
+        self.process_capture(capture_slice, level_change, &mut out)?;
         self.pull_metrics()?;
 
         let out_array = out.into_pyarray(py);
@@ -300,6 +327,30 @@ impl PyAec3 {
 }
 
 impl PyAec3 {
+    fn process_capture(
+        &mut self,
+        capture: &[f32],
+        level_change: bool,
+        out: &mut [f32],
+    ) -> PyResult<()> {
+        let meta = PacketMeta {
+            sequence: Some(self.capture_sequence),
+            discontinuity: level_change,
+            ..PacketMeta::default()
+        };
+        self.capture_sequence = self.capture_sequence.wrapping_add(1);
+        if !self
+            .inner
+            .process_capture_frame_with_meta(capture, meta, out)
+            .map_err(map_graph_err)?
+        {
+            return Err(PyValueError::new_err(
+                "audio pipeline produced no capture frame",
+            ));
+        }
+        Ok(())
+    }
+
     /// Drain the metrics export sink, caching the most recent sample.
     fn pull_metrics(&mut self) -> PyResult<()> {
         loop {

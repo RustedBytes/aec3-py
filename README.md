@@ -4,7 +4,7 @@ PyO3 + NumPy wrapper for [aec3-rs](https://github.com/RubyBit/aec3-rs), a Rust i
 
 ## Requirements
 - Python 3.10–3.14 with NumPy
-- Rust toolchain 1.85+ (edition 2024) to build the extension
+- Rust toolchain 1.88+ (edition 2024) to build the extension
 - `maturin` for building wheels (`pip install maturin`)
 - `soundfile` only for the WAV example
 
@@ -59,10 +59,27 @@ python examples/demo2.py examples/render.wav examples/mic_with_echo.wav output.w
 - `Aec3.metrics()` — read current metrics without processing.
 - `Metrics` fields: `echo_return_loss`, `echo_return_loss_enhancement`, `delay_ms`, plus jitter stats `render_jitter_min` / `render_jitter_max` / `capture_jitter_min` / `capture_jitter_max`.
 
-> Note: the legacy `level_change` argument of `process_capture_frame` / `process` is still accepted for backward compatibility but is ignored — the aec3-rs ≥ 0.4 graph API no longer has this concept.
+> `level_change=True` signals a capture gain change. It is forwarded as capture packet `discontinuity`, which the upstream AEC3 node passes to its gain-change handling.
 
 ## Notes
-- Built on `aec3::pipelines::linear` (aec3-rs ≥ 0.4): render + capture → high-pass filter → AEC3 → noise suppression → AGC2, plus a fullband post filter at 48 kHz. Only `enable_high_pass` is configurable from Python; NS/AGC2/post filter are enabled by default, so output differs from the old 0.1.x echo-cancellation-only behaviour.
+- Built on `aec3::pipelines::linear` (aec3-rs 0.4). The default is high-pass filter → AEC3, retaining the previous stage selection. New keyword-only `enable_noise_suppression`, `enable_gain_controller2`, and `enable_post_filter` options default to `False`. Enable them explicitly for HPF → AEC3 → NS → AGC2 → fullband post filter (post filter acts at 48 kHz).
+- Inputs and outputs use normalized float32 audio (typically -1 to +1), not float-encoded PCM16. NaN/Inf are rejected before processing; inputs are borrowed read-only and output arrays own their memory.
+- The same `Aec3` instance must stay on its creating thread. Process render before the corresponding capture frame. `initial_delay_ms` / `set_audio_buffer_delay()` supply an external delay hint, not an output delay or audio resampler.
+- `set_audio_buffer_delay()` returns `None` on success and raises `ValueError` for graph errors. Metrics are cached snapshots of the latest AEC3 export; reading them repeatedly does not advance audio or reset adaptation. They describe the AEC stage before optional NS/AGC2.
+- A graph call that unexpectedly produces no capture output raises `ValueError` rather than returning fabricated silence. Upstream algorithm changes mean default output is not bit-identical to 0.1.x.
 - Supported sample rates: 16 kHz, 32 kHz, 48 kHz. Resample beforehand if needed.
 - Input arrays must be contiguous `float32`. Shape validation mirrors the Rust API.
 - `frame_samples` x `channels` always describes a 10 ms chunk; stream audio in those frame sizes for best performance.
+
+## Validation
+
+CI builds and installs release wheels before running regression tests on Linux, Windows and macOS with Python 3.10–3.14. Locally:
+
+```sh
+python -m pip install maturin numpy pytest
+maturin develop --release --locked
+python -m pytest -q
+python benchmarks/compare.py --output benchmark.json
+```
+
+Run the benchmark with old and new wheels in separate environments on the same machine, sequentially. `--full-pipeline` explicitly enables the additional stages. See [migration review](docs/migration-review.md) for methodology, results and limitations.

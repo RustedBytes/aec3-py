@@ -2,7 +2,7 @@
 name = "aec3_py"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [lib]
 name = "aec3_py"
