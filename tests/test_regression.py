@@ -1,12 +1,20 @@
 import numpy as np
 import pytest
+from signals import attenuation_db, echo_signal, run_stream
+
 from aec3_py import Aec3, Metrics
-from signals import echo_signal, run_stream, attenuation_db
 
 RATES = (16000, 32000, 48000)
 CHANNELS = ((1, 1), (1, 2), (2, 1), (2, 2))
-FIELDS = ("echo_return_loss", "echo_return_loss_enhancement", "delay_ms",
-          "render_jitter_min", "render_jitter_max", "capture_jitter_min", "capture_jitter_max")
+FIELDS = (
+    "echo_return_loss",
+    "echo_return_loss_enhancement",
+    "delay_ms",
+    "render_jitter_min",
+    "render_jitter_max",
+    "capture_jitter_min",
+    "capture_jitter_max",
+)
 
 
 @pytest.mark.parametrize("rate", RATES)
@@ -52,10 +60,11 @@ def test_near_end_and_owned_outputs(rate, channels):
     c = rng.normal(0, 0.1, aec.frame_samples * channels).astype(np.float32)
     first, _ = aec.process(c)
     saved = first.copy()
+    latest = first
     for _ in range(100):
         latest, _ = aec.process(c)
     np.testing.assert_array_equal(first, saved)
-    assert np.mean(latest ** 2) > 1e-5
+    assert np.mean(latest**2) > 1e-5
     assert not np.shares_memory(first, latest) and not np.shares_memory(first, c)
     assert aec.set_audio_buffer_delay(30) is None
     assert aec.set_audio_buffer_delay(0) is None
@@ -73,14 +82,21 @@ def test_invalid_channels(r, c):
         Aec3(16000, r, c)
 
 
-@pytest.mark.parametrize("method", ("process", "process_capture_frame", "handle_render_frame"))
-@pytest.mark.parametrize("kind", ("short", "long", "strided", "float64", "2d", "nan", "inf"))
+@pytest.mark.parametrize(
+    "method", ("process", "process_capture_frame", "handle_render_frame")
+)
+@pytest.mark.parametrize(
+    "kind", ("short", "long", "strided", "float64", "2d", "nan", "inf")
+)
 def test_invalid_frames(method, kind):
     aec = Aec3(16000, 1, 1)
     frames = {
-        "short": np.zeros(159, np.float32), "long": np.zeros(161, np.float32),
-        "strided": np.zeros(320, np.float32)[::2], "float64": np.zeros(160),
-        "2d": np.zeros((160, 1), np.float32), "nan": np.full(160, np.nan, np.float32),
+        "short": np.zeros(159, np.float32),
+        "long": np.zeros(161, np.float32),
+        "strided": np.zeros(320, np.float32)[::2],
+        "float64": np.zeros(160),
+        "2d": np.zeros((160, 1), np.float32),
+        "nan": np.full(160, np.nan, np.float32),
         "inf": np.full(160, np.inf, np.float32),
     }
     with pytest.raises((ValueError, TypeError)):
@@ -105,8 +121,14 @@ def test_combined_validation_is_atomic():
 @pytest.mark.parametrize("rate", RATES)
 @pytest.mark.parametrize("channels", (1, 2))
 def test_optional_full_pipeline(rate, channels):
-    aec = Aec3(rate, channels, channels, enable_noise_suppression=True,
-               enable_gain_controller2=True, enable_post_filter=True)
+    aec = Aec3(
+        rate,
+        channels,
+        channels,
+        enable_noise_suppression=True,
+        enable_gain_controller2=True,
+        enable_post_filter=True,
+    )
     r, c = echo_signal(rate, channels, channels, seconds=1)
     out, _ = run_stream(aec, r, c)
     assert np.isfinite(out).all()
@@ -122,9 +144,9 @@ def test_initial_metrics_and_readonly_fields():
 
 def test_level_change_reaches_aec3():
     r, c = echo_signal(16000, 1, 1)
-    c[400 * 160:] *= 0.5
+    c[400 * 160 :] *= 0.5
     a, b = Aec3(16000, 1, 1, 30), Aec3(16000, 1, 1, 30)
     changed, _ = run_stream(a, r, c, change_at=400)
     unchanged, _ = run_stream(b, r, c)
-    np.testing.assert_array_equal(changed[:400 * 160], unchanged[:400 * 160])
-    assert np.max(np.abs(changed[400 * 160:] - unchanged[400 * 160:])) > 1e-7
+    np.testing.assert_array_equal(changed[: 400 * 160], unchanged[: 400 * 160])
+    assert np.max(np.abs(changed[400 * 160 :] - unchanged[400 * 160 :])) > 1e-7
