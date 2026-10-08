@@ -107,7 +107,6 @@ def main(render_path: str, capture_path: str, out_path: str):
         out_frame, metrics = aec.process(
             capture_frame,
             render_frame,
-            level_change=False,
         )
 
         # Back to (frame_samples, capture_channels)

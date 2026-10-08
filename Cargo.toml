@@ -1,7 +1,8 @@
 [package]
 name = "aec3_py"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
 
 [lib]
 name = "aec3_py"
@@ -9,13 +10,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # PyO3 extension module
-pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 # NumPy bindings for PyO3
-numpy = "0.27"
+numpy = "0.29"
 
 # AEC3 crate (published version range; adjust if you want a specific patch)
-aec3 = "0.1"
+aec3 = "0.4.0"
 
 [profile.release]
 lto = true
